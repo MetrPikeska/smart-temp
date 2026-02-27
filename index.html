@@ -260,7 +260,7 @@
                 document.getElementById('errorContainer').innerHTML = '';
                 
                 // Načíst poslední hodnoty
-                const latestRes = await fetch('api.php?action=latest');
+                const latestRes = await fetch('/api/latest');
                 const latest = await latestRes.json();
                 
                 if (latest.error) {
@@ -274,7 +274,7 @@
                 document.getElementById('humidityStatus').innerHTML = '✓ Aktuální - ' + new Date(latest.created_at).toLocaleTimeString('cs-CZ');
                 
                 // Načíst historii
-                const historyRes = await fetch('api.php?action=history&hours=24');
+                const historyRes = await fetch('/api/history?hours=24');
                 const history = await historyRes.json();
                 
                 if (!Array.isArray(history)) {
@@ -286,7 +286,7 @@
                 updateChart(history);
                 
                 // Načíst statistiku
-                const statsRes = await fetch('api.php?action=stats&hours=24');
+                const statsRes = await fetch('/api/stats?hours=24');
                 const stats = await statsRes.json();
                 
                 if (stats.error) {

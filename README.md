@@ -21,7 +21,7 @@ petrmikeska.cz (PHP + HTML)
 ```bash
 sudo -u postgres psql
 postgres=# CREATE DATABASE esp32_sensors;
-postgres=# CREATE USER esp_user WITH PASSWORD 'kokot';
+postgres=# CREATE USER esp_user WITH PASSWORD '<your_password>';
 postgres=# GRANT ALL PRIVILEGES ON DATABASE esp32_sensors TO esp_user;
 postgres=# \c esp32_sensors
 esp32_sensors=# CREATE TABLE sensor_data (
@@ -36,13 +36,22 @@ esp32_sensors=# CREATE INDEX idx_created_at ON sensor_data(created_at DESC);
 ### 2. Python API Server (na 192.168.34.4)
 
 ```bash
+cd ~/smart-temp
+python3 -m venv venv
+source venv/bin/activate
 pip install flask psycopg2-binary
 python3 server.py
 ```
 
 Server bude naslouchat na `http://192.168.34.4:5000`
+Upravte WiFi v `src/main.cpp`:
+```cpp
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+```
 
-### 3. ESP32
+Pak nahrajte:
+```bash
 
 ```bash
 # Zkompilovat a nahrát
@@ -62,19 +71,17 @@ Pak otevřete: `http://petrmikeska.cz/index.html`
 
 ## Konfigurační údaje
 
-### ESP32
-- **WiFi SSID:** Tomsovsky
-- **WiFi heslo:** 604246127
-- **Server:** 192.168.34.4:5000
+## Konfigurace
+
+### ESP32 Hardware
 - **I2C SDA:** GPIO 21
 - **I2C SCL:** GPIO 22
 - **LED:** GPIO 2
 
 ### PostgreSQL
-- **Host:** localhost
 - **Databáze:** esp32_sensors
 - **Uživatel:** esp_user
-- **Heslo:** kokot
+- **Host:** localhost
 - **Port:** 5432
 
 ## API Endpoints
