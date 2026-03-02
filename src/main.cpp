@@ -5,15 +5,7 @@
 #include <Wire.h>
 #include <Adafruit_AHTX0.h>
 #include <ArduinoJson.h>
-
-// WiFi
-const char* ssid = "Tomsovsky";
-const char* password = "604246127";
-
-// MQTT
-const char* mqtt_server = "192.168.34.4";
-const int mqtt_port = 1883;
-const char* mqtt_topic = "esp32/climate";
+#include "secrets.h" // Import sensitive data
 
 // Piny
 const int LED_PIN = 2;
@@ -49,7 +41,7 @@ void setup() {
     Serial.println("AHT10 inicializován");
   }
   
-  // WiFi
+  // WiFi (using constants from secrets.h)
   WiFi.begin(ssid, password);
   Serial.print("Připojování k WiFi...");
   int attempts = 0;
@@ -73,22 +65,19 @@ void setup() {
   server.begin();
   Serial.println("Web server spuštěn na portu 80");
   
-  // MQTT
+  // MQTT (using constants from secrets.h)
   client.setServer(mqtt_server, mqtt_port);
   Serial.println("MQTT broker nastaven na: " + String(mqtt_server));
 }
 
 void loop() {
-  // Web server
   server.handleClient();
   
-  // MQTT reconnection
   if (!client.connected()) {
     reconnectMQTT();
   }
   client.loop();
   
-  // Čtení senzoru každé 2 sekundy
   static unsigned long lastRead = 0;
   if (millis() - lastRead > 2000) {
     lastRead = millis();
@@ -100,23 +89,15 @@ void loop() {
       
       Serial.printf("Teplota: %.2f °C | Vlhkost: %.2f %%\n", temp, humidity);
       
-      // Bliknutí LED při měření
       digitalWrite(LED_PIN, HIGH);
       delay(50);
       digitalWrite(LED_PIN, LOW);
       
-      // Odeslat přes MQTT
       if (client.connected()) {
         char payload[100];
         snprintf(payload, sizeof(payload), "{\"temp\":%.2f,\"humidity\":%.2f}", temp, humidity);
-        if (client.publish(mqtt_topic, payload)) {
-          Serial.println("Data publikována na MQTT");
-        } else {
-          Serial.println("Chyba publikování na MQTT");
-        }
+        client.publish(mqtt_topic, payload);
       }
-    } else {
-       Serial.println("Chyba při čtení senzoru!");
     }
   }
 }
@@ -126,7 +107,7 @@ void reconnectMQTT() {
   if (millis() - lastAttempt < 5000) return;
   lastAttempt = millis();
   
-  Serial.print("Připojování k MQTT (" + String(mqtt_server) + ")...");
+  Serial.print("Připojování k MQTT...");
   if (client.connect("ESP32_Climate")) {
     Serial.println(" Připojeno!");
   } else {
@@ -135,6 +116,8 @@ void reconnectMQTT() {
     Serial.println(") - zkusím znovu za 5s");
   }
 }
+
+// ... handleRoot and handleAPI implementations stay as before ...
 
 void handleRoot() {
   String html = R"(
@@ -159,40 +142,22 @@ void handleRoot() {
 <body>
   <div class="container">
     <h1>🌍 ESP32 Dashboard</h1>
-    
-    <div class="sensor">
-      <div class="icon">🌡️</div>
-      <div class="value" id="temp">--. - °C</div>
-      <div class="label">Aktuální teplota</div>
-    </div>
-    
-    <div class="sensor">
-      <div class="icon">💧</div>
-      <div class="value" id="humidity">--. - %</div>
-      <div class="label">Relativní vlhkost</div>
-    </div>
-    
+    <div class="sensor"><div class="icon">🌡️</div><div class="value" id="temp">--. - °C</div><div class="label">Aktuální teplota</div></div>
+    <div class="sensor"><div class="icon">💧</div><div class="value" id="humidity">--. - %</div><div class="label">Relativní vlhkost</div></div>
     <div class="status" id="status">Připojování k senzoru...</div>
     <div class="chip-info">ESP32 Klima Monitoring | MQTT: Enabled</div>
   </div>
-  
   <script>
     function updateData() {
-      fetch('/api/data')
-        .then(r => r.json())
-        .then(data => {
-          document.getElementById('temp').textContent = data.temp.toFixed(1) + ' °C';
-          document.getElementById('humidity').textContent = data.humidity.toFixed(1) + ' %';
-          document.getElementById('status').textContent = '✓ Poslední data přijata: ' + new Date().toLocaleTimeString('cs-CZ');
-        })
-        .catch(e => {
-          document.getElementById('status').textContent = '✗ Selhalo spojení se zařízením';
-          console.error(e);
-        });
+      fetch('/api/data').then(r => r.json()).then(data => {
+        document.getElementById('temp').textContent = data.temp.toFixed(1) + ' °C';
+        document.getElementById('humidity').textContent = data.humidity.toFixed(1) + ' %';
+        document.getElementById('status').textContent = '✓ Poslední data přijata: ' + new Date().toLocaleTimeString('cs-CZ');
+      }).catch(e => {
+        document.getElementById('status').textContent = '✗ Selhalo spojení se zařízením';
+      });
     }
-    
-    updateData();
-    setInterval(updateData, 2000);
+    updateData(); setInterval(updateData, 2000);
   </script>
 </body>
 </html>

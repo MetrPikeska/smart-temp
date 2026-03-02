@@ -13,4 +13,8 @@ __pycache__/
 
 # Credentials
 config.json
-secrets.py
+secrets.py# Sensitive information
+secrets.h
+.env
+__pycache__/
+*.pyc

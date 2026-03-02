@@ -1,17 +1,22 @@
 import paho.mqtt.client as mqtt
 import psycopg2
 import json
+import os
+from dotenv import load_dotenv
+
+# Načtení proměnných z .env souboru
+load_dotenv()
 
 # Konfigurace
-MQTT_BROKER = "192.168.34.4"
-MQTT_PORT = 1883
-MQTT_TOPIC = "esp32/climate"
+MQTT_BROKER = os.getenv("MQTT_SERVER", "192.168.34.4")
+MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "esp32/climate")
 
 DB_CONFIG = {
-    "host": "192.168.34.4",
-    "database": "esp32_sensors",
-    "user": "esp_user",
-    "password": "kokot"
+    "host": os.getenv("DB_HOST", "192.168.34.4"),
+    "database": os.getenv("DB_NAME", "esp32_sensors"),
+    "user": os.getenv("DB_USER", "esp_user"),
+    "password": os.getenv("DB_PASS", "kokot")
 }
 
 def on_connect(client, userdata, flags, rc):
@@ -26,7 +31,6 @@ def on_message(client, userdata, msg):
         
         print(f"Přijata data: Teplota={temp}°C, Vlhkost={humidity}%")
         
-        # Uložení do PostgreSQL
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         cur.execute(
@@ -41,7 +45,7 @@ def on_message(client, userdata, msg):
     except Exception as e:
         print(f"Chyba při zpracování zprávy: {e}")
 
-client = mqtt.Client()
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1) # Použití moderního API
 client.on_connect = on_connect
 client.on_message = on_message
 
