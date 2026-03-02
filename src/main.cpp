@@ -1,57 +1,57 @@
 #include <Arduino.h>
-#include <Wire.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <WebServer.h>
+#include <PubSubClient.h>
+#include <Wire.h>
+#include <Adafruit_AHTX0.h>
 #include <ArduinoJson.h>
 
 // WiFi
 const char* ssid = "Tomsovsky";
 const char* password = "604246127";
 
-// Server
-const char* server = "192.168.34.4";
-const int port = 5432;  // PostgreSQL port
+// MQTT
+const char* mqtt_server = "192.168.34.4";
+const int mqtt_port = 1883;
+const char* mqtt_topic = "esp32/climate";
 
-// I2C
-#define LED_PIN 2
-#define I2C_SDA 21
-#define I2C_SCL 22
+// Piny
+const int LED_PIN = 2;
+const int SDA_PIN = 21;
+const int SCL_PIN = 22;
 
-// AHT10
-#define AHT10_ADDR 0x38
-#define AHT10_INIT 0xBE
-#define AHT10_MEASURE 0xAC
-#define AHT10_SOFTRESET 0xBA
+WebServer server(80);
+WiFiClient espClient;
+PubSubClient client(espClient);
+Adafruit_AHTX0 aht;
 
-// Forward declarations
-void initAHT10();
-bool readAHT10(float &temperature, float &humidity);
-void sendToServer(float temp, float humidity);
-void connectWiFi();
+float temp = 0;
+float humidity = 0;
 
-unsigned long lastSend = 0;
-const unsigned long sendInterval = 10000; // 10 sekund
+void handleRoot();
+void handleAPI();
+void reconnectMQTT();
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(100);
   
   pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
   
-  Serial.println("\n\nESP32 - AHT10 + WiFi");
+  Serial.println("\n\nESP32 - Teplota + Web Server + MQTT");
   
-  Wire.begin(I2C_SDA, I2C_SCL);
-  initAHT10();
+  // I2C a AHT10
+  Wire.begin(SDA_PIN, SCL_PIN);
+  if (!aht.begin()) {
+    Serial.println("AHT10 nenalezen!");
+  } else {
+    Serial.println("AHT10 inicializován");
+  }
   
-  connectWiFi();
-}
-
-void connectWiFi() {
-  Serial.print("Připojování k WiFi: ");
-  Serial.println(ssid);
-  
+  // WiFi
   WiFi.begin(ssid, password);
-  
+  Serial.print("Připojování k WiFi...");
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
@@ -60,123 +60,151 @@ void connectWiFi() {
   }
   
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi připojeno!");
-    Serial.print("IP: ");
+    Serial.println("\nPřipojeno!");
+    Serial.print("IP adresa: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println("\nWiFi selhalo!");
-  }
-}
-
-void initAHT10() {
-  Serial.println("Inicializace AHT10...");
-  
-  Wire.beginTransmission(AHT10_ADDR);
-  Wire.write(AHT10_SOFTRESET);
-  Wire.endTransmission();
-  delay(20);
-  
-  Wire.beginTransmission(AHT10_ADDR);
-  Wire.write(AHT10_INIT);
-  Wire.write(0x08);
-  Wire.write(0x00);
-  Wire.endTransmission();
-  delay(100);
-  
-  Serial.println("AHT10 inicializován");
-}
-
-bool readAHT10(float &temperature, float &humidity) {
-  Wire.beginTransmission(AHT10_ADDR);
-  Wire.write(AHT10_MEASURE);
-  Wire.write(0x33);
-  Wire.write(0x00);
-  Wire.endTransmission();
-  
-  delay(80);
-  
-  Wire.requestFrom(AHT10_ADDR, 6);
-  
-  if (Wire.available() != 6) {
-    return false;
+    Serial.println("\nChyba připojení WiFi!");
   }
   
-  uint8_t data[6];
-  for (int i = 0; i < 6; i++) {
-    data[i] = Wire.read();
-  }
+  // Web server
+  server.on("/", handleRoot);
+  server.on("/api/data", handleAPI);
+  server.begin();
+  Serial.println("Web server spuštěn na portu 80");
   
-  if (data[0] & 0x80) {
-    return false;
-  }
-  
-  uint32_t humidity_raw = ((uint32_t)data[1] << 12) | ((uint32_t)data[2] << 4) | (data[3] >> 4);
-  humidity = (float)humidity_raw / 1048576.0f * 100.0f;
-  
-  uint32_t temperature_raw = (((uint32_t)data[3] & 0x0F) << 16) | ((uint32_t)data[4] << 8) | data[5];
-  temperature = (float)temperature_raw / 1048576.0f * 200.0f - 50.0f;
-  
-  return true;
-}
-
-void sendToServer(float temp, float humidity) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi není připojeno!");
-    return;
-  }
-  
-  // Připravit JSON
-  StaticJsonDocument<200> doc;
-  doc["temperature"] = temp;
-  doc["humidity"] = humidity;
-  
-  String jsonData;
-  serializeJson(doc, jsonData);
-  
-  // Odeslat na Python API server
-  HTTPClient http;
-  String url = "http://192.168.34.4:5000/api/data";
-  
-  http.begin(url);
-  http.addHeader("Content-Type", "application/json");
-  
-  int httpResponseCode = http.POST(jsonData);
-  
-  if (httpResponseCode > 0) {
-    Serial.print("Response: ");
-    Serial.println(httpResponseCode);
-  } else {
-    Serial.print("Chyba: ");
-    Serial.println(http.errorToString(httpResponseCode));
-  }
-  
-  http.end();
+  // MQTT
+  client.setServer(mqtt_server, mqtt_port);
+  Serial.println("MQTT broker nastaven na: " + String(mqtt_server));
 }
 
 void loop() {
-  // Rozsvícení LED
-  digitalWrite(LED_PIN, HIGH);
+  // Web server
+  server.handleClient();
   
-  // Čtení senzoru
-  float temp = 0, humidity = 0;
-  if (readAHT10(temp, humidity)) {
-    Serial.print("Teplota: ");
-    Serial.print(temp, 1);
-    Serial.print(" °C | Vlhkost: ");
-    Serial.print(humidity, 1);
-    Serial.println(" %");
-    
-    // Posílat na server každých 10 sekund
-    if (millis() - lastSend >= sendInterval) {
-      sendToServer(temp, humidity);
-      lastSend = millis();
-    }
-  } else {
-    Serial.println("Chyba čtení AHT10");
+  // MQTT reconnection
+  if (!client.connected()) {
+    reconnectMQTT();
   }
+  client.loop();
   
-  // Zhasnutí LED
-  digitalWrite(LED_PIN, LOW);
+  // Čtení senzoru každé 2 sekundy
+  static unsigned long lastRead = 0;
+  if (millis() - lastRead > 2000) {
+    lastRead = millis();
+    
+    sensors_event_t humidity_event, temp_event;
+    if (aht.getEvent(&humidity_event, &temp_event)) {
+      temp = temp_event.temperature;
+      humidity = humidity_event.relative_humidity;
+      
+      Serial.printf("Teplota: %.2f °C | Vlhkost: %.2f %%\n", temp, humidity);
+      
+      // Bliknutí LED při měření
+      digitalWrite(LED_PIN, HIGH);
+      delay(50);
+      digitalWrite(LED_PIN, LOW);
+      
+      // Odeslat přes MQTT
+      if (client.connected()) {
+        char payload[100];
+        snprintf(payload, sizeof(payload), "{\"temp\":%.2f,\"humidity\":%.2f}", temp, humidity);
+        if (client.publish(mqtt_topic, payload)) {
+          Serial.println("Data publikována na MQTT");
+        } else {
+          Serial.println("Chyba publikování na MQTT");
+        }
+      }
+    } else {
+       Serial.println("Chyba při čtení senzoru!");
+    }
+  }
+}
+
+void reconnectMQTT() {
+  static unsigned long lastAttempt = 0;
+  if (millis() - lastAttempt < 5000) return;
+  lastAttempt = millis();
   
-  delay(1000);
+  Serial.print("Připojování k MQTT (" + String(mqtt_server) + ")...");
+  if (client.connect("ESP32_Climate")) {
+    Serial.println(" Připojeno!");
+  } else {
+    Serial.print(" Chyba (rc=");
+    Serial.print(client.state());
+    Serial.println(") - zkusím znovu za 5s");
+  }
+}
+
+void handleRoot() {
+  String html = R"(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 Klimatizace</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; background: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+    .container { max-width: 450px; margin: 40px auto; background: white; padding: 40px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    h1 { color: #2c3e50; margin-bottom: 30px; }
+    .sensor { margin: 25px 0; padding: 25px; background: #fafafa; border-radius: 10px; border: 1px solid #eee; }
+    .value { font-size: 42px; color: #3498db; font-weight: bold; }
+    .label { color: #7f8c8d; margin-top: 12px; font-size: 1.1em; text-transform: uppercase; letter-spacing: 1px; }
+    .icon { font-size: 52px; margin-bottom: 5px; }
+    .status { margin-top: 30px; font-size: 0.85em; padding: 12px; background: #e8f4fd; border-radius: 8px; color: #2980b9; }
+    .chip-info { font-size: 0.75em; color: #bdc3c7; margin-top: 15px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🌍 ESP32 Dashboard</h1>
+    
+    <div class="sensor">
+      <div class="icon">🌡️</div>
+      <div class="value" id="temp">--. - °C</div>
+      <div class="label">Aktuální teplota</div>
+    </div>
+    
+    <div class="sensor">
+      <div class="icon">💧</div>
+      <div class="value" id="humidity">--. - %</div>
+      <div class="label">Relativní vlhkost</div>
+    </div>
+    
+    <div class="status" id="status">Připojování k senzoru...</div>
+    <div class="chip-info">ESP32 Klima Monitoring | MQTT: Enabled</div>
+  </div>
+  
+  <script>
+    function updateData() {
+      fetch('/api/data')
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('temp').textContent = data.temp.toFixed(1) + ' °C';
+          document.getElementById('humidity').textContent = data.humidity.toFixed(1) + ' %';
+          document.getElementById('status').textContent = '✓ Poslední data přijata: ' + new Date().toLocaleTimeString('cs-CZ');
+        })
+        .catch(e => {
+          document.getElementById('status').textContent = '✗ Selhalo spojení se zařízením';
+          console.error(e);
+        });
+    }
+    
+    updateData();
+    setInterval(updateData, 2000);
+  </script>
+</body>
+</html>
+  )";
+  server.send(200, "text/html", html);
+}
+
+void handleAPI() {
+  StaticJsonDocument<100> doc;
+  doc["temp"] = temp;
+  doc["humidity"] = humidity;
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
 }
